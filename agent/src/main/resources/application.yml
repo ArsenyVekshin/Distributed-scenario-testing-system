@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: agent
+  # No datasource — agent is a pure Temporal worker, state lives in coordinator.
+
+server:
+  # Minimal HTTP server kept only for the actuator health endpoint.
+  port: ${SERVER_PORT:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+temporal:
+  service-address: ${TEMPORAL_SERVICE_ADDRESS:localhost:7233}
+  namespace: ${TEMPORAL_NAMESPACE:default}
+
+coordinator:
+  base-url: ${COORDINATOR_BASE_URL:http://localhost:8080}
+
+agent:
+  task-queue: ${AGENT_TASK_QUEUE:agent-task-queue}
+  id: ${AGENT_ID:}
+  address: ${AGENT_ADDRESS:}
+  heartbeat-interval-ms: ${AGENT_HEARTBEAT_INTERVAL_MS:5000}
+  heartbeat-initial-delay-ms: ${AGENT_HEARTBEAT_INITIAL_DELAY_MS:1000}
+
+s3:
+  endpoint:   ${S3_ENDPOINT:http://localhost:9000}
+  region:     ${S3_REGION:us-east-1}
+  access-key: ${S3_ACCESS_KEY:disttest}
+  secret-key: ${S3_SECRET_KEY:disttest123}
+  bucket:     ${S3_BUCKET:dst-configs}
+
+logging:
+  level:
+    com.disttest: DEBUG

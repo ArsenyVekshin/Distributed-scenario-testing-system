@@ -1,0 +1,161 @@
+services:
+
+  # ─── Infrastructure ──────────────────────────────────────────────────────────
+
+  postgresql:
+    image: postgres:16-alpine
+    container_name: dst-postgresql
+    environment:
+      POSTGRES_USER: disttest
+      POSTGRES_PASSWORD: disttest
+      POSTGRES_DB: disttest     # Temporal подключается к БД с именем пользователя по умолчанию
+    ports:
+      - "5433:5432"    # хост:5433 → контейнер:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infrastructure/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U disttest"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - dst-net
+
+  temporal:
+    image: temporalio/auto-setup:1.27.2
+    container_name: dst-temporal
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432              # порт внутри сети Docker, не хостовый
+      POSTGRES_USER: disttest
+      POSTGRES_PWD: disttest
+      POSTGRES_SEEDS: postgresql
+    ports:
+      - "7233:7233"
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator cluster health --address temporal:7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: on-failure
+    networks:
+      - dst-net
+
+  temporal-ui:
+    image: temporalio/ui:2.34.0
+    container_name: dst-temporal-ui
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: "http://localhost:3000,http://localhost:8080"
+    ports:
+      - "8088:8080"
+    networks:
+      - dst-net
+
+  minio:
+    image: minio/minio:latest
+    container_name: dst-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: disttest
+      MINIO_ROOT_PASSWORD: disttest123
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - dst-net
+
+  # ─── Application Services ─────────────────────────────────────────────────────
+
+  coordinator:
+    build:
+      context: ./coordinator
+      dockerfile: Dockerfile
+    container_name: dst-coordinator
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgresql:5432/coordinator
+      SPRING_DATASOURCE_USERNAME: disttest
+      SPRING_DATASOURCE_PASSWORD: disttest
+      SPRING_JPA_HIBERNATE_DDL_AUTO: ${SPRING_JPA_HIBERNATE_DDL_AUTO:-update}
+      TEMPORAL_SERVICE_ADDRESS: temporal:7233
+      SERVER_PORT: 8080
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://188.134.94.41:3000,http://81.26.182.214:3000
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: disttest
+      S3_SECRET_KEY: disttest123
+      S3_BUCKET: dst-configs
+    ports:
+      - "8080:8080"
+    restart: on-failure
+    networks:
+      - dst-net
+
+  # Agent — Temporal worker для build и test activities.
+  # Масштабирование: docker compose up --scale agent=3
+  agent:
+    deploy:
+      replicas: 3
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    depends_on:
+      minio:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_SERVICE_ADDRESS: temporal:7233
+      COORDINATOR_BASE_URL: http://coordinator:8080
+      AGENT_TASK_QUEUE: agent-task-queue
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: disttest
+      S3_SECRET_KEY: disttest123
+      S3_BUCKET: dst-configs
+      AGENT_ID: ""
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: on-failure
+    networks:
+      - dst-net
+
+  web-ui:
+    build:
+      context: ./web-ui
+      dockerfile: Dockerfile
+    container_name: dst-web-ui
+    depends_on:
+      - coordinator
+    ports:
+      - "3000:80"
+    networks:
+      - dst-net
+
+volumes:
+  postgres-data:
+  minio-data:
+
+networks:
+  dst-net:
+    driver: bridge

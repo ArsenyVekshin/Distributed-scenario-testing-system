@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: coordinator
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/coordinator}  # локально: порт 5433
+    username: ${SPRING_DATASOURCE_USERNAME:disttest}
+    password: ${SPRING_DATASOURCE_PASSWORD:disttest}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      connection-timeout: 30000
+      initialization-fail-timeout: -1   # не прерывать старт при недоступной БД
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_batch_fetch_size: 20   # избегает N+1 для @ElementCollection
+    open-in-view: false
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+temporal:
+  service-address: ${TEMPORAL_SERVICE_ADDRESS:localhost:7233}
+  namespace: default
+
+s3:
+  endpoint:   ${S3_ENDPOINT:http://localhost:9000}
+  region:     ${S3_REGION:us-east-1}
+  access-key: ${S3_ACCESS_KEY:disttest}
+  secret-key: ${S3_SECRET_KEY:disttest123}
+  bucket:     ${S3_BUCKET:dst-configs}
+
+# springdoc: пути по умолчанию — /v3/api-docs, /swagger-ui.html (не переопределяем api-docs.path).
+# Кастомный api-docs + GroupedOpenApi ломал загрузку UI (неверный URL спецификации).
+
+logging:
+  level:
+    com.disttest: DEBUG
+    org.springdoc: INFO
